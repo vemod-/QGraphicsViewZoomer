@@ -19,17 +19,25 @@ public:
         parent->grabGesture(Qt::PinchGesture);
 #ifdef Q_OS_IOS
         parent->grabGesture(Qt::TapAndHoldGesture);
+#else
+        parent->setTransformationAnchor(QGraphicsView::AnchorViewCenter);
+        parent->setResizeAnchor(QGraphicsView::AnchorViewCenter);
 #endif
         setZoom(zoom);
     }
     void setZoom(const double Zoom) {
-        zoomfactor=Zoom;
+        zoomfactor = Zoom;
         if (!m_NoMatrix)
         {
-            QTransform matrix = static_cast<QGraphicsView*>(parent())->transform();
+            QGraphicsView* w = static_cast<QGraphicsView*>(parent());
+#ifndef Q_OS_IOS
+            w->setTransformationAnchor(QGraphicsView::AnchorViewCenter);
+            w->setResizeAnchor(QGraphicsView::AnchorViewCenter);
+#endif
+            QTransform matrix = w->transform();
             matrix.reset();
             matrix.scale(zoomfactor,zoomfactor);
-            static_cast<QGraphicsView*>(parent())->setTransform(matrix);
+            w->setTransform(matrix);
         }
     }
     double getZoom() const {
@@ -49,6 +57,34 @@ public:
     }
     double min() const {
         return m_Min;
+    }
+    void scrollXTo(qreal x) {
+        QGraphicsView* w = static_cast<QGraphicsView*>(parent());
+        qreal y = visibleRect().top();
+        w->centerOn(QRectF(w->viewport()->rect()).center() + QPointF(x,y));
+    }
+    void scrollYTo(qreal y) {
+        QGraphicsView* w = static_cast<QGraphicsView*>(parent());
+        qreal x = visibleRect().left();
+        w->centerOn(QRectF(w->viewport()->rect()).center() + QPointF(x,y));
+    }
+    qreal maxScrollX() {
+        QGraphicsView* w = static_cast<QGraphicsView*>(parent());
+        return std::max<qreal>(0,w->sceneRect().width() - w->viewport()->width());
+    }
+    qreal scrollValueX() {
+        return visibleRect().left();
+    }
+    qreal scrollValueY() {
+        return visibleRect().top();
+    }
+    qreal maxScrollY() {
+        QGraphicsView* w = static_cast<QGraphicsView*>(parent());
+        return std::max<qreal>(0,w->sceneRect().height() - w->viewport()->height());
+    }
+    QRectF visibleRect() {
+        QGraphicsView* w = static_cast<QGraphicsView*>(parent());
+        return w->mapToScene(w->viewport()->rect()).boundingRect();
     }
 protected:
     bool eventFilter(QObject * obj, QEvent *event)
@@ -90,11 +126,32 @@ protected:
     }
     void pinchTriggered(QPinchGesture *gesture)
     {
-        if (gesture->state() & Qt::GestureStarted) gesture->setTotalScaleFactor(getZoom());
+        double oldZoom = zoomfactor;
+        if (gesture->state() & Qt::GestureStarted) gesture->setTotalScaleFactor(zoomfactor);
         if (gesture->totalScaleFactor()>m_Max) gesture->setTotalScaleFactor(m_Max);
         if (gesture->totalScaleFactor()<m_Min) gesture->setTotalScaleFactor(m_Min);
-        setZoom(gesture->totalScaleFactor());
-        emit ZoomChanged(gesture->totalScaleFactor());
+        zoomfactor = gesture->totalScaleFactor();
+        if (!m_NoMatrix)
+        {
+            QGraphicsView* w = static_cast<QGraphicsView*>(parent());
+#ifdef Q_OS_IOS
+            QPointF viewPos = w->mapFromGlobal(gesture->centerPoint());
+            QPointF scenePos = w->mapToScene(viewPos.toPoint());
+            QTransform matrix = w->transform();
+            matrix.reset();
+            matrix.translate(scenePos.x(), scenePos.y());
+            matrix.scale(zoomfactor,zoomfactor);
+            matrix.translate(-scenePos.x(), -scenePos.y());
+#else
+            w->setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+            w->setResizeAnchor(QGraphicsView::AnchorViewCenter);
+            QTransform matrix = w->transform();
+            matrix.reset();
+            matrix.scale(zoomfactor,zoomfactor);
+#endif
+            w->setTransform(matrix);
+        }
+        emit ZoomChanged(zoomfactor, oldZoom);
     }
 #ifdef Q_OS_IOS
     void longpressTriggered(QTapAndHoldGesture *gesture) {
@@ -112,12 +169,12 @@ protected:
     }
 #endif
 private:
-    double zoomfactor=1;
+    double zoomfactor = 1;
     bool m_NoMatrix = false;
     double m_Max = 4;
     double m_Min = 0.1;
 signals:
-    void ZoomChanged(double zoom);
+    void ZoomChanged(double zoom, double oldZoom);
 };
 
 #endif // QGRAPHICSVIEWZOOMER_H
